@@ -494,9 +494,11 @@ c======================================================================
 
       do 1 m = mstart+1, nt
 
+	     print *, 'Location 1'
          dumb(1) = m
          call MPI_GATHER(dumb, 1, MPI_INT, cursteps, 1, MPI_INT, 0,
      x                MPI_COMM_WORLD, ierr)
+	     print *, 'Location 2'
 
       call MPI_BARRIER(MPI_COMM_WORLD,ierr)
          if (my_rank .eq. 0) then
