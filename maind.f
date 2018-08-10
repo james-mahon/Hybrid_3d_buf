@@ -19,6 +19,7 @@ c----------------------------------------------------------------------
       USE grid_interp
       USE chem_rates
       USE iso_fortran_env, only: output_unit,error_unit
+      USE ifport, only: rename
 
 
 c----------------------------------------------------------------------
@@ -144,9 +145,6 @@ c----------------------------------------------------------------------
       endif
 
       filenum = int_to_str(my_rank+1)
-
-      call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-
 
       write(*,*) 'filenum...',filenum,my_rank+1
 
@@ -289,26 +287,6 @@ c----------------------------------------------------------------------
 
           close(1000+my_rank)
 
-         if(my_rank .eq. 0) then
-           call execute_command_line(
-     x     'python fileShrinker.py '//
-     x         trim(out_dir)//'grid/ '//int_to_str(mstart)
-     x         ,exitstat=ierr)
-           if(ierr .ne. 0) then
-             write(*,*) 'failed to shrink files1'
-             call MPI_ABORT(MPI_COMM_WORLD,ierr,ierr)
-             stop
-           endif
-           call execute_command_line(
-     x     'python fileShrinker.py '//
-     x         trim(out_dir)//'particle/ '//int_to_str(mstart)
-     x         ,exitstat=ierr)
-           if(ierr .ne. 0) then
-             write(*,*) 'failed to shrink files'
-             call MPI_ABORT(MPI_COMM_WORLD,ierr,ierr)
-             stop
-           endif
-         endif
       endif
       restart_counter = mstart + mrestart
 
@@ -717,6 +695,10 @@ c Write restart file
 c----------------------------------------------------------------------
 
          if (m .eq. restart_counter) then
+          ierr = rename(trim(out_dir)//'restart.vars'//filenum, 
+     x           trim(out_dir)//'restart.vars'//filenum//'.old')
+          ierr = rename(trim(out_dir)//'restart.part'//filenum, 
+     x           trim(out_dir)//'restart.part'//filenum//'.old')
 
 
           write(*,*) 'writing restart file....',
