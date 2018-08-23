@@ -48,6 +48,8 @@ c----------------------------------------------------------------------
      x     np_tot(nx,ny,nz),      !total ion number density at time level n, n+1/2
      x     np_H(nx,ny,nz),    !proton number density at time level n, n+1/2
      x     np_He(nx,ny,nz),   !He++ number density at time level n, n+1/2
+     x     np_shell(nx,ny,nz),   !shell number density at time level n, n+1/2
+     x     np_sw(nx,ny,nz),   !solar wind number density at time level n, n+1/2
      x     np_CH4(nx,ny,nz),  !CH4+ number density at time level n, n+1/2
      x     vp(Ni_max,3),      !particle velocity at t level n+1/2
      x     vp1(Ni_max,3),     !particle velocity at t level n
@@ -77,6 +79,8 @@ c----------------------------------------------------------------------
       real temp_tot(nx,ny,nz)
       real temp_h(nx,ny,nz)
       real temp_he(nx,ny,nz)
+      real temp_shell(nx,ny,nz)
+      real temp_sw(nx,ny,nz)
       real temp_ch4(nx,ny,nz)
 
       real Evp,       !total particle kinetic energy
@@ -176,14 +180,24 @@ c----------------------------------------------------------------------
       call get_command_argument(number=1,value=arg,status=ierr)
       restart = (trim(arg) == "restart")
 
-      Ni_tot = Ni_tot_0
-      Ni_tot_sw = Ni_tot
-      Ni_tot_sys = Ni_tot
-      print *,'Ni_tot_sys, Ni_tot..',Ni_tot_sys,Ni_tot,Ni_tot_sw
+
+      Ni_thermal_H = 
+     x  Ni_tot_0/(1 
+     x            + b_sw_thermal_He*f_sw_thermal_He 
+     x            + b_sw_shell_H*f_sw_shell_H)
+
+      Ni_thermal_He = b_sw_thermal_He*f_sw_thermal_He*Ni_thermal_H
+      Ni_shell_H = b_sw_shell_H*f_sw_shell_H*Ni_thermal_H
+
+      ! Due to round off this will be very close to, but not exactly
+      ! Ni_tot_0
+      Ni_tot = Ni_thermal_H + Ni_thermal_He + Ni_shell_H
+
+      print *,'Ni_tot_0, Ni_tot',Ni_tot_0,Ni_tot
       
       if (my_rank .eq. 0) then
          call check_inputs(my_rank)
-         write(*,*) 'Particles per cell....',Ni_tot_sys/(nx*ny*nz)
+         write(*,*) 'Particles per cell....',Ni_tot/(nx*ny*nz)
          write(*,*) ' '
       endif
          
@@ -211,14 +225,6 @@ c initialize seed for each processor
       input_E = 0.0
       input_chex = 0.0
       input_bill = 0.0
-
-
-      if (.not.(restart)) then
-         mrat(1:Ni_tot) = 1.0
-         mrat(Ni_tot+1:) = 1.0/m_pu !mass N_2+ = 28.0
-         beta_p(1:Ni_tot) = 1.0
-         beta_p(Ni_tot+1:) = beta_pu
-      endif
 
       call grd_no_strech()
       call get_nu(nu)
@@ -282,7 +288,7 @@ c----------------------------------------------------------------------
           write(*,*) 'reading restart.part......',filenum
           read(1000+my_rank) vp,vp1,
      x         xp,Ni_tot,
-     x         Ni_tot_sys,
+     x         Ni_tot_0,
      x         mrat, tags
 
           close(1000+my_rank)
@@ -365,9 +371,15 @@ c----------------------------------------------------------------------
      x     'c.np_He_3d_'//filenum//'.dat', access= acc,
      x     status=stat,form='unformatted')
       open(117,file=trim(out_dir)//'grid/'//
-     x     'c.np_CH4_3d_'//filenum//'.dat', access= acc,
+     x     'c.np_shell_3d_'//filenum//'.dat', access= acc,
      x     status=stat,form='unformatted')
       open(118,file=trim(out_dir)//'grid/'//
+     x     'c.np_sw_3d_'//filenum//'.dat', access= acc,
+     x     status=stat,form='unformatted')
+      open(119,file=trim(out_dir)//'grid/'//
+     x     'c.np_CH4_3d_'//filenum//'.dat', access= acc,
+     x     status=stat,form='unformatted')
+      open(120,file=trim(out_dir)//'grid/'//
      x     'c.np_tot_3d_'//filenum//'.dat', access= acc,
      x     status=stat,form='unformatted')
 
@@ -424,11 +436,19 @@ c----------------------------------------------------------------------
      x     status=stat, access= acc,
      x     form='unformatted')
       open(304,file=trim(out_dir)//'grid/'//
+     x     'c.temp_shell_3d_'//filenum//'.dat',
+     x     status=stat, access= acc,
+     x     form='unformatted')
+      open(305,file=trim(out_dir)//'grid/'//
+     x     'c.temp_sw_3d_'//filenum//'.dat',
+     x     status=stat, access= acc,
+     x     form='unformatted')
+      open(306,file=trim(out_dir)//'grid/'//
      x     'c.temp_ch4_3d_'//filenum//'.dat',
      x     status=stat, access= acc,
      x     form='unformatted')
 
-      open(305,file=trim(out_dir)//'particle/'//
+      open(307,file=trim(out_dir)//'particle/'//
      x     'c.xp_'//filenum//'.dat',
      x     status=stat, access= acc,
      x     form='unformatted')
@@ -507,7 +527,7 @@ c======================================================================
          call update_np_boundary(np)
          call update_up(vp,np,up)       !up at n+1/2
 
-         call ionization(np,xp,vp,vp1)
+         !call ionization(np,xp,vp,vp1)
 
 
          call curlB(b1,np,aj)
@@ -546,25 +566,59 @@ c======================================================================
          ! to be updated on the output step
          if (ndiag .eq. nout) then
                call get_temperature(xp,vp,np,temp_p)
+
+               ! total
                call separate_temperature(xp,vp,np,temp_tot,
-     x                   (tags==1))
-               call separate_temperature(xp,vp,np,temp_h,
-     x                   (mrat==1.0 .and. tags==1))
-               call separate_temperature(xp,vp,np,temp_he,
-     x                   (mrat==2.0/4.0 .and. tags==1))
-               call separate_temperature(xp,vp,np,temp_ch4,
-     x                   (mrat==1.0/16.0 .and. tags==1))
+     x                   (tags==sw_thermal_H_tag 
+     x               .or. tags==sw_thermal_He_tag
+     x               .or. tags==sw_shell_H_tag
+     x               .or. tags==pluto_photoionize_CH4_tag
+     x               .or. tags==pluto_stagnant_photoionize_CH4_tag
+     x               .or. tags==pluto_chex_CH4_tag))
+               ! Thermal H
+               call separate_temperature(xp,vp,np,temp_H,
+     x                   (tags==sw_thermal_H_tag ))
+               ! He
+               call separate_temperature(xp,vp,np,temp_He,
+     x                   (tags==sw_thermal_He_tag ))
+               ! Shell H
+               call separate_temperature(xp,vp,np,temp_shell,
+     x                   (tags==sw_shell_H_tag ))
+               ! Solar wind
+               call separate_temperature(xp,vp,np,temp_sw,
+     x                   (tags==sw_thermal_H_tag 
+     x               .or. tags==sw_thermal_He_tag
+     x               .or. tags==sw_shell_H_tag))
+               ! CH4
+               call separate_temperature(xp,vp,np,temp_CH4,
+     x                   (tags==pluto_photoionize_CH4_tag
+     x               .or. tags==pluto_stagnant_photoionize_CH4_tag
+     x               .or. tags==pluto_chex_CH4_tag))
 
-               call separate_np(np_tot, 
-     x                   (tags == 1))
+               ! total
+               call separate_np(np_tot,
+     x                   (tags==sw_thermal_H_tag 
+     x               .or. tags==sw_thermal_He_tag
+     x               .or. tags==sw_shell_H_tag
+     x               .or. tags==pluto_photoionize_CH4_tag
+     x               .or. tags==pluto_stagnant_photoionize_CH4_tag
+     x               .or. tags==pluto_chex_CH4_tag))
                call separate_np(np_H,
-     x                   (mrat==1.0 .and. tags==1))
+     x                   (tags==sw_thermal_H_tag ))
                call separate_np(np_He,
-     x                   (mrat==2.0/4.0 .and. tags==1))
+     x                   (tags==sw_thermal_He_tag))
+               call separate_np(np_shell,
+     x                   (tags==sw_shell_H_tag))
+               call separate_np(np_sw,
+     x                   (tags==sw_thermal_H_tag 
+     x               .or. tags==sw_thermal_He_tag
+     x               .or. tags==sw_shell_H_tag))
                call separate_np(np_CH4,
-     x                   (mrat==1.0/16.0 .and. tags==1))
-         endif
+     x                   (tags==pluto_photoionize_CH4_tag
+     x               .or. tags==pluto_stagnant_photoionize_CH4_tag
+     x               .or. tags==pluto_chex_CH4_tag))
 
+         endif
          
 c**********************************************************************
 c SUBCYCLING LOOP!
@@ -643,9 +697,13 @@ c save 3d arrays------------------------
                write(116) m
                write(116) np_He
                write(117) m
-               write(117) np_CH4
+               write(117) np_shell
                write(118) m
-               write(118) np_tot
+               write(118) np_sw
+               write(119) m
+               write(119) np_CH4
+               write(120) m
+               write(120) np_tot
 
                write(131) m
                write(131) b1
@@ -664,14 +722,18 @@ c save 3d arrays------------------------
                write(303) m
                write(303) temp_he/1.6e-19
                write(304) m
-               write(304) temp_ch4/1.6e-19
+               write(304) temp_shell/1.6e-19
+               write(305) m
+               write(305) temp_sw/1.6e-19
+               write(306) m
+               write(306) temp_ch4/1.6e-19
 
                ! Only output particle data only near pluto
                if ( ndiag_part .ge. part_nout ) then
                if ( my_rank .gt. procnum/2 - 15 .and.
      x              my_rank .lt. procnum/2 + 15) then
-                   write(305) m
-                   write(305) xp(:Ni_tot,:)
+                   write(307) m
+                   write(307) xp(:Ni_tot,:)
                    write(310) m
                    write(310) vp(:Ni_tot,:)
                    write(311) m
@@ -717,7 +779,7 @@ c----------------------------------------------------------------------
      x             status='unknown',form='unformatted')
           write(1000+my_rank) vp,vp1,
      x             xp,Ni_tot,
-     x             Ni_tot_sys,
+     x             Ni_tot_0,
      x             mrat, tags
 
           close(1000+my_rank)
