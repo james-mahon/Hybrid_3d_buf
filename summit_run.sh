@@ -3,7 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --time=00:15:00
 #SBATCH --qos=testing
-#SBATCH --partition=shas
+#SBATCH --partition=shas-testing
 #SBATCH --ntasks=4
 #SBATCH --job-name=Simulation
 #SBATCH --output=simulation.%j.out
@@ -13,7 +13,7 @@
 #SBATCH --mail-type=FAIL
 
 module purge
-module load gcc/6.1.0
-module load openmpi/1.10.2
+module load intel/17.4
+module load impi/17.3
 
 ./run.sh -d /scratch/summit/jama3001/data -i $SLURM_NTASKS
